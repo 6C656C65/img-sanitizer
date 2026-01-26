@@ -19,7 +19,7 @@ jobs:
           python-version: 3.14
 
       - name: Install dependencies
-        run: pip install --no-cache-dir -U pip ruff mypy
+        run: pip install --no-cache-dir ".[dev]"
 
       - name: Lint and security check with Ruff
         run: ruff check img_sanitizer tests
@@ -44,8 +44,8 @@ jobs:
         with:
           python-version: 3.14
 
-      - name: Install build dependencies
-        run: pip install --no-cache-dir -e .
+      - name: Install dependencies
+        run: pip install --no-cache-dir ".[dev]"
 
       - name: Run tests
         run: pytest -q
