@@ -13,6 +13,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import piexif
 from rich.progress import (
@@ -159,7 +160,7 @@ class Sanitizer:
             orientation = exif_dict["0th"].get(piexif.ImageIFD.Orientation)
             icc_profile = exif_dict.get("ICC")
 
-            new_exif = {
+            new_exif: dict[str, Any] = {
                 "0th": {},
                 "Exif": {},
                 "GPS": {},

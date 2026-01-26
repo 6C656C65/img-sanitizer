@@ -20,4 +20,4 @@ logging.basicConfig(
 
 logger = logging.getLogger(__package__)
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

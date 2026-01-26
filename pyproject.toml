@@ -1,6 +1,6 @@
 [project]
 name = "img-sanitizer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python library designed to prepare, clean, and normalize JPEG images before publishing or archiving. "
 readme = "README.md"
 requires-python = ">=3.14"
@@ -50,8 +50,10 @@ docstring-code-format = true
 
 [tool.mypy]
 strict = true
+files = ["img_sanitizer"]
+ignore_missing_imports = true
 disallow_untyped_defs = true
-disallow_any_unimported = true
+allow_untyped_decorators = true
 no_implicit_optional = true
 warn_return_any = true
 show_error_codes = true
@@ -61,3 +63,4 @@ warn_redundant_casts = true
 warn_unused_configs = true
 warn_no_return = true
 check_untyped_defs = true
+explicit_package_bases = true

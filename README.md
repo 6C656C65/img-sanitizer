@@ -1,4 +1,20 @@
-# img-sanitizer
+<div align="center">
+  <h1>img-sanitizer</h1>
+</div>
+
+<p align="center">
+  <img src="https://img.shields.io/github/license/6c656c65/img-sanitizer?style=for-the-badge">
+  <img src="https://img.shields.io/github/issues/6c656c65/img-sanitizer?style=for-the-badge">
+  <img src="https://img.shields.io/github/issues-closed/6c656c65/img-sanitizer?style=for-the-badge">
+  <br>
+  <img src="https://img.shields.io/github/forks/6c656c65/img-sanitizer?style=for-the-badge">
+  <img src="https://img.shields.io/github/stars/6c656c65/img-sanitizer?style=for-the-badge">
+  <img src="https://img.shields.io/github/commit-activity/w/6c656c65/img-sanitizer?style=for-the-badge">
+  <img src="https://img.shields.io/github/contributors/6c656c65/img-sanitizer?style=for-the-badge">
+  <br>
+  <img src="https://img.shields.io/pypi/v/img-sanitizer?style=for-the-badge">
+  <img src="https://img.shields.io/pypi/pyversions/img-sanitizer?style=for-the-badge">
+</p>
 
 Python library designed to sanitize images by removing sensitive metadata.
 
