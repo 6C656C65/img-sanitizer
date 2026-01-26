@@ -26,7 +26,7 @@ def common(
         help="Enable debug logging",
         is_eager=True,
     ),
-):
+) -> None:
     """Typer callback executed before subcommands.
 
     Configures logging level according to the `--debug` option.
@@ -67,7 +67,7 @@ def sanitize(
         min=1,
         help="Number of worker threads",
     ),
-):
+) -> None:
     """Command that sanitizes images in `source` and writes to `dest`.
 
     Files are renamed using a SHA-1 prefix, copied to `dest`, and
@@ -92,7 +92,7 @@ def sanitize(
 
 
 @app.command()
-def version():
+def version() -> None:
     """Display the current version of img-sanitizer."""
     typer.echo(img_sanitizer.__version__)
 

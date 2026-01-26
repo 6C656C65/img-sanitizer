@@ -28,7 +28,7 @@ jobs:
         run: ruff format --check img_sanitizer tests
 
       - name: Check code typing with Mypy
-        run: mypy img_sanitizer --strict
+        run: mypy --config-file pyproject.toml
 
   pytest:
     needs: code-scan
