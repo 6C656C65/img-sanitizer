@@ -1,4 +1,4 @@
-from img_sanitizer.report import Report
+from img_sanitizer.models import Report
 
 
 def test_report_display_outputs_table(capsys):

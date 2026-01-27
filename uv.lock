@@ -25,7 +25,7 @@ wheels = [
 
 [[package]]
 name = "img-sanitizer"
-version = "0.1.0"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "piexif" },
@@ -39,9 +39,6 @@ requires-dist = [
     { name = "rich", specifier = ">=14.2.0" },
     { name = "typer", specifier = ">=0.21.1" },
 ]
-
-[package.metadata.requires-dev]
-dev = []
 
 [[package]]
 name = "markdown-it-py"

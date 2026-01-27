@@ -26,7 +26,7 @@ from rich.progress import (
 )
 
 import img_sanitizer
-from img_sanitizer.report import Report
+from img_sanitizer.models import Image, Report
 
 
 class Sanitizer:
@@ -70,7 +70,9 @@ class Sanitizer:
         parallel using a thread pool.
         """
         img_sanitizer.logger.info("Scanning source folder for images...")
-        files = list(self.source.rglob("*.jpg")) + list(self.source.rglob("*.jpeg"))
+        files: list[Path] = list(self.source.rglob("*.jpg")) + list(
+            self.source.rglob("*.jpeg")
+        )
         img_sanitizer.logger.info("Found %s image(s) in source folder.", len(files))
 
         img_sanitizer.logger.info("Scanning destination folder for existing files...")
@@ -105,25 +107,19 @@ class Sanitizer:
         are caught and reflected in the `Report`.
         """
         try:
-            sha1 = self._sha1_file(src_path)[:12]
-            extension = src_path.suffix.lower()
-            if sha1 in existing_hashes:
-                img_sanitizer.logger.info("Ignored (SHA1 exists): %s", src_path)
+            sha1 = self._sha1_file(src_path)
+            image = Image(path=src_path, sha1=sha1)
+
+            if image.short_sha in existing_hashes:
+                img_sanitizer.logger.info("Ignored (SHA1 exists): %s", image.path)
                 self.report.ignored += 1
                 return
 
-            new_name = f"{sha1}{extension}"
-            relative_dir = src_path.parent.relative_to(self.source)
-            final_dir = self.dest / relative_dir
-            final_dir.mkdir(parents=True, exist_ok=True)
-            dst_path = final_dir / new_name
-
-            shutil.copy2(src_path, dst_path)
-            img_sanitizer.logger.info("%s → %s", src_path, dst_path)
-            self.report.copied += 1
-
+            dst_path = self._copy_image(image)
             self._clean_exif(dst_path)
-            img_sanitizer.logger.info("EXIF cleaned: %s", dst_path)
+
+            img_sanitizer.logger.info("Processed: %s", dst_path)
+            self.report.copied += 1
 
         except Exception as e:
             img_sanitizer.logger.error("Error on %s : %s", src_path, e)
@@ -181,3 +177,22 @@ class Sanitizer:
             img_sanitizer.logger.error("Error on %s : %s", path, e)
             self.report.failed += 1
             return
+
+    def _copy_image(self, image: Image) -> Path:
+        """Copy an image to the destination with a new name.
+
+        The new name is built using the first 12 characters of the
+        SHA-1 digest, preserving the original file extension. The
+        relative path from source to the image is preserved in the
+        destination directory. Necessary directories are created as
+        needed.
+        """
+        relative_dir = image.path.parent.relative_to(self.source)
+        final_dir = self.dest / relative_dir
+        final_dir.mkdir(parents=True, exist_ok=True)
+
+        new_name = f"{image.short_sha}{image.extension}"
+        dst_path = final_dir / new_name
+
+        shutil.copy2(image.path, dst_path)
+        return dst_path

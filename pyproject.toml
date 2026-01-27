@@ -1,6 +1,6 @@
 [project]
 name = "img-sanitizer"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python library designed to prepare, clean, and normalize JPEG images before publishing or archiving. "
 readme = "README.md"
 requires-python = ">=3.14"
