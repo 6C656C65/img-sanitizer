@@ -68,7 +68,7 @@ def sanitize(
         min=1,
         help="Number of worker threads",
     ),
-    hash_sample_size: str = typer.Option(
+    hash_sample_size_raw: str = typer.Option(
         None,
         "--hash-sample-size",
         help="Partial hash: only the first N bytes are hashed (e.g., 512K, 2MB, 1Mo). Full file if not set.",
@@ -80,8 +80,10 @@ def sanitize(
     their EXIF metadata is stripped (retaining orientation/ICC when
     present). Processing runs with multiple worker threads.
     """
-    if hash_sample_size:
+    hash_sample_size = None
+    if hash_sample_size_raw:
         hash_sample_size = humanfriendly.parse_size(hash_sample_size)
+
     sanitizer = Sanitizer(source, dest, worker, hash_sample_size)
 
     try:
