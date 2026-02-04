@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Annotated
 
+import humanfriendly
 import typer
 
 import img_sanitizer
@@ -67,6 +68,11 @@ def sanitize(
         min=1,
         help="Number of worker threads",
     ),
+    hash_sample_size_raw: str = typer.Option(
+        None,
+        "--hash-sample-size",
+        help="Partial hash: only the first N bytes are hashed (e.g., 512K, 2MB, 1Mo). Full file if not set.",
+    ),
 ) -> None:
     """Command that sanitizes images in `source` and writes to `dest`.
 
@@ -74,7 +80,11 @@ def sanitize(
     their EXIF metadata is stripped (retaining orientation/ICC when
     present). Processing runs with multiple worker threads.
     """
-    sanitizer = Sanitizer(source, dest, worker)
+    hash_sample_size = None
+    if hash_sample_size_raw:
+        hash_sample_size = humanfriendly.parse_size(hash_sample_size)
+
+    sanitizer = Sanitizer(source, dest, worker, hash_sample_size)
 
     try:
         sanitizer.run()
