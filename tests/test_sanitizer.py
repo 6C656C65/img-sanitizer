@@ -12,7 +12,7 @@ def test_sha1_file(tmp_path):
     f = src_dir / "a.jpg"
     f.write_bytes(data)
 
-    s = Sanitizer(src_dir, tmp_path / "dst", worker=1)
+    s = Sanitizer(src_dir, tmp_path / "dst", worker=1, hash_sample_size=None)
     got = s._sha1_file(f)
     assert got == "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"
 
@@ -29,7 +29,7 @@ def test_process_file_copies_and_names(tmp_path):
     img = f / "image.jpg"
     img.write_bytes(data)
 
-    s = Sanitizer(src_dir, dest_dir, worker=1)
+    s = Sanitizer(src_dir, dest_dir, worker=1, hash_sample_size=None)
 
     # process the file directly
     s._process_file(img, existing_hashes=set())
@@ -51,7 +51,7 @@ def test_clean_exif_handles_piexif_error(tmp_path, monkeypatch):
     img = tmp_path / "img.jpg"
     img.write_bytes(b"dummy")
 
-    s = Sanitizer(tmp_path, tmp_path / "dst", worker=1)
+    s = Sanitizer(tmp_path, tmp_path / "dst", worker=1, hash_sample_size=None)
     s._clean_exif(img)
 
     assert s.report.failed == 1
@@ -77,7 +77,7 @@ def test_clean_exif_calls_insert_with_minimal_exif(tmp_path, monkeypatch):
     img = tmp_path / "img.jpg"
     img.write_bytes(b"dummy")
 
-    s = Sanitizer(tmp_path, tmp_path / "dst", worker=1)
+    s = Sanitizer(tmp_path, tmp_path / "dst", worker=1, hash_sample_size=None)
     s._clean_exif(img)
 
     assert recorded.get("inserted") == b"exifbytes"
@@ -101,7 +101,7 @@ def test_run_skips_existing(tmp_path):
     existing.mkdir(parents=True)
     (existing / f"{sha1_f1}.jpg").write_bytes(b"exists")
 
-    s = Sanitizer(src, dst, worker=1)
+    s = Sanitizer(src, dst, worker=1, hash_sample_size=None)
     s.run()
 
     # one should be ignored (f1), one copied (f2)
@@ -122,7 +122,7 @@ def test_process_file_copy_error_increments_failed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(shutil, "copy2", boom)
 
-    s = Sanitizer(src, dst, worker=1)
+    s = Sanitizer(src, dst, worker=1, hash_sample_size=None)
     s._process_file(img, existing_hashes=set())
 
     assert s.report.failed == 1
@@ -136,4 +136,4 @@ def test_cli_sanitize_runs(tmp_path):
     (src / "img.jpg").write_bytes(b"\xff\xd8\xff\xd9")
 
     # call the CLI command directly
-    cli.sanitize(src, dst, worker=1)
+    cli.sanitize(src, dst, worker=1, hash_sample_size_raw=None)
