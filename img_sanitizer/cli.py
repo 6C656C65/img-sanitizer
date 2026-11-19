@@ -48,7 +48,7 @@ def _parse_sample_size(raw: str | None) -> int | None:
     if not raw:
         return None
     try:
-        size = humanfriendly.parse_size(raw, binary=True)
+        size = int(humanfriendly.parse_size(raw, binary=True))
     except humanfriendly.InvalidSize as e:
         raise typer.BadParameter(str(e), param_hint="--hash-sample-size") from e
     if size <= 0:
