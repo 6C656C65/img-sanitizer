@@ -52,7 +52,9 @@ def _parse_sample_size(raw: str | None) -> int | None:
     except humanfriendly.InvalidSize as e:
         raise typer.BadParameter(str(e), param_hint="--hash-sample-size") from e
     if size <= 0:
-        raise typer.BadParameter("must be greater than 0", param_hint="--hash-sample-size")
+        raise typer.BadParameter(
+            "must be greater than 0", param_hint="--hash-sample-size"
+        )
     return size
 
 
