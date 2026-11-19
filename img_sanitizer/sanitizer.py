@@ -3,17 +3,20 @@
 This module exposes the `Sanitizer` class which scans a source
 directory for JPEG images, renames them using a SHA-1 digest,
 copies them to a destination directory preserving relative
-structure, and strips most EXIF metadata while keeping useful
-fields such as orientation and ICC profile.
+structure, and strips most EXIF metadata while keeping the
+orientation tag and the ICC profile.
 """
 
 import hashlib
+import os
 import re
 import shutil
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import piexif
 from rich.progress import (
@@ -22,11 +25,34 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
-    track,
 )
 
 import img_sanitizer
 from img_sanitizer.models import Image, Report
+
+JPEG_SUFFIXES = {".jpg", ".jpeg"}
+
+# Names produced by this tool: "<12 hex chars>", optionally prefixed by "<n>_".
+HASHED_NAME = re.compile(r"(?:\d+_)?([a-f0-9]{12})", re.IGNORECASE)
+
+
+class Status(Enum):
+    """Outcome of the processing of a single file."""
+
+    COPIED = auto()
+    IGNORED = auto()
+    FAILED = auto()
+
+
+def _feed(h: Any, f: BinaryIO, length: int, buffer_size: int) -> None:
+    """Feed `length` bytes (or less, if EOF comes first) of `f` into hash `h`."""
+    remaining = length
+    while remaining > 0:
+        chunk = f.read(min(buffer_size, remaining))
+        if not chunk:
+            break
+        h.update(chunk)
+        remaining -= len(chunk)
 
 
 class Sanitizer:
@@ -36,6 +62,8 @@ class Sanitizer:
     - source: directory containing images to sanitize
     - dest: target directory where sanitized images will be written
     - worker: number of threads used when processing files
+    - hash_sample_size: number of bytes hashed at each end of a file
+      (None to hash the whole file)
     """
 
     def __init__(
@@ -44,8 +72,8 @@ class Sanitizer:
         """Initialize a new `Sanitizer` instance.
 
         The constructor records a start time and prepares a `Report`
-        instance as well as a `rich` progress renderer used during
-        the `run` phase.
+        instance. Counters of the report are only updated from the
+        calling thread, never from the workers.
         """
         self.source = source
         self.dest = dest
@@ -54,167 +82,191 @@ class Sanitizer:
 
         self.report = Report()
 
-        self._progress = Progress(
+        self._hash_sample_size: int | None = hash_sample_size
+        self._known_hashes: set[str] = set()
+        self._lock = threading.Lock()
+
+    def run(self) -> None:
+        """Execute the sanitization pipeline.
+
+        This scans the source directory for JPEG files, skips any
+        file whose hash is already known (present in the destination
+        or already handled during this run), and processes the others
+        in parallel using a thread pool.
+
+        A `KeyboardInterrupt` cancels the queued files, waits for the
+        files being processed, then is propagated to the caller.
+        """
+        img_sanitizer.logger.debug("Hash sample size set to %s", self._hash_sample_size)
+        self.dest.mkdir(parents=True, exist_ok=True)
+
+        img_sanitizer.logger.info("Scanning source folder for images...")
+        files: list[Path] = [
+            f
+            for f in self.source.rglob("*")
+            if f.is_file() and f.suffix.lower() in JPEG_SUFFIXES
+        ]
+        img_sanitizer.logger.info("Found %s image(s) in source folder.", len(files))
+
+        img_sanitizer.logger.info("Scanning destination folder for existing files...")
+        self._known_hashes = self._scan_existing_hashes()
+        img_sanitizer.logger.info(
+            "Found %s known hash(es) in destination.", len(self._known_hashes)
+        )
+
+        with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
             TextColumn("{task.completed}/{task.total}"),
             TimeElapsedColumn(),
             console=img_sanitizer.console,
-        )
+        ) as progress:
+            task = progress.add_task("Processing images...", total=len(files))
 
-        self._hash_sample_size: int | None = hash_sample_size
+            executor = ThreadPoolExecutor(max_workers=self.worker)
+            try:
+                futures = [executor.submit(self._process_file, f) for f in files]
+                for future in as_completed(futures):
+                    self._record(future.result())
+                    progress.advance(task)
+            finally:
+                # No-op once everything is done; on Ctrl+C or error, drops the
+                # queued files and waits only for the ones already running.
+                executor.shutdown(wait=True, cancel_futures=True)
 
-    def run(self) -> None:
-        """Execute the sanitization pipeline.
-
-        This scans the source directory for JPEG files, skips any
-        files that appear to already exist in the destination (by
-        comparing computed SHA-1 prefixes), and processes files in
-        parallel using a thread pool.
-        """
-        img_sanitizer.logger.debug("Hash sample size set to %s", self._hash_sample_size)
-        img_sanitizer.logger.info("Scanning source folder for images...")
-        files: list[Path] = [
-            f for f in self.source.rglob("*") if f.suffix.lower() in {".jpg", ".jpeg"}
-        ]
-        img_sanitizer.logger.info("Found %s image(s) in source folder.", len(files))
-
-        img_sanitizer.logger.info("Scanning destination folder for existing files...")
-        hash_pattern = re.compile(r"(?:^\d+_)?([a-f0-9]{12})", re.IGNORECASE)
-
-        existing_hashes: set[str] = set()
-
+    def _scan_existing_hashes(self) -> set[str]:
+        """Collect the short hashes of the images already in the destination."""
+        hashes: set[str] = set()
         for f in self.dest.rglob("*"):
-            if f.is_file():
-                match = hash_pattern.search(f.stem)
+            if f.is_file() and f.suffix.lower() in JPEG_SUFFIXES:
+                match = HASHED_NAME.fullmatch(f.stem)
                 if match:
-                    existing_hashes.add(match.group(1).lower())
-        img_sanitizer.logger.info(
-            "Found %s existing file(s) in destination.", len(existing_hashes)
-        )
+                    hashes.add(match.group(1).lower())
+        return hashes
 
-        with ThreadPoolExecutor(max_workers=self.worker) as executor:
-            for _ in track(
-                executor.map(lambda f: self._process_file(f, existing_hashes), files),
-                total=len(files),
-                description="[bold blue]Processing images...",
-                console=self._progress.console,
-            ):
-                pass
+    def _record(self, status: Status) -> None:
+        """Update the report (called from the main thread only)."""
+        match status:
+            case Status.COPIED:
+                self.report.copied += 1
+            case Status.IGNORED:
+                self.report.ignored += 1
+            case Status.FAILED:
+                self.report.failed += 1
 
-    def _process_file(self, src_path: Path, existing_hashes: set[str]) -> None:
-        """Process a single file: copy and sanitize EXIF.
+    def _process_file(self, src_path: Path) -> Status:
+        """Process a single file: copy, sanitize EXIF, then publish.
 
-        The method computes a short SHA-1 digest used as the new
-        filename, copies the file to the destination (preserving the
-        relative path) and attempts to clean EXIF metadata. Errors
-        are caught and reflected in the `Report`.
+        The image is copied to a temporary file, stripped of its
+        metadata, and only then moved to its final name. A file whose
+        metadata cannot be stripped is therefore never left in the
+        destination.
         """
+        reserved_sha: str | None = None
+        tmp_path: Path | None = None
+
         try:
             sha1 = self._sha1_file(src_path, sample_size=self._hash_sample_size)
             image = Image(path=src_path, sha1=sha1)
 
-            if image.short_sha in existing_hashes:
-                img_sanitizer.logger.debug("Ignored (SHA1 exists): %s", image.path)
-                self.report.ignored += 1
-                return
+            # Check and reserve atomically so that two identical files
+            # cannot be processed at the same time.
+            with self._lock:
+                if image.short_sha in self._known_hashes:
+                    img_sanitizer.logger.debug("Ignored (SHA1 exists): %s", image.path)
+                    return Status.IGNORED
+                self._known_hashes.add(image.short_sha)
+                reserved_sha = image.short_sha
 
-            dst_path = self._copy_image(image)
-            self._clean_exif(dst_path)
+            tmp_path, dst_path = self._copy_to_temp(image)
+            self._clean_exif(tmp_path)
+            os.replace(tmp_path, dst_path)
 
             img_sanitizer.logger.info("Processed: %s", dst_path)
-            self.report.copied += 1
+            return Status.COPIED
 
         except Exception as e:
             img_sanitizer.logger.error("Error on %s : %s", src_path, e)
-            self.report.failed += 1
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            if reserved_sha is not None:
+                with self._lock:
+                    self._known_hashes.discard(reserved_sha)
+            return Status.FAILED
 
     def _sha1_file(
         self, filepath: Path, buffer_size: int = 65536, sample_size: int | None = None
     ) -> str:
         """Compute and return the SHA-1 digest of a file as hex.
 
-        The digest is computed by reading the file in chunks to avoid
-        large memory usage for big images. The full hex digest is
-        returned (the caller may truncate it for shorter file names).
+        The file is read in chunks to avoid large memory usage.
 
-        If `sample_size` provided, only the first `sample_size` bytes
-        of the file are hashed. Useful for fast deduplication of large files.
-        If None, the full file is hashed.
+        If `sample_size` is None, or if the file is not larger than
+        twice that size, the whole file is hashed. Otherwise the digest
+        covers the file size, its first `sample_size` bytes and its last
+        `sample_size` bytes: much faster on large files, and far less
+        prone to false duplicates than hashing the head alone.
         """
         h = hashlib.sha1()
-        remaining = sample_size
 
         with filepath.open("rb") as f:
-            while True:
-                chunk_size = (
-                    buffer_size if remaining is None else min(buffer_size, remaining)
-                )
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                h.update(chunk)
-                if remaining is not None:
-                    remaining -= len(chunk)
-                    if remaining <= 0:
-                        break
+            size = os.fstat(f.fileno()).st_size
+
+            if sample_size is None or size <= 2 * sample_size:
+                _feed(h, f, size, buffer_size)
+            else:
+                h.update(size.to_bytes(8, "big"))
+                _feed(h, f, sample_size, buffer_size)
+                f.seek(-sample_size, os.SEEK_END)
+                _feed(h, f, sample_size, buffer_size)
 
         sha1 = h.hexdigest()
         img_sanitizer.logger.debug("SHA1 of %s : %s", filepath, sha1)
         return sha1
 
     def _clean_exif(self, path: Path) -> None:
-        """Remove most EXIF tags while keeping orientation and ICC.
+        """Remove EXIF metadata from a JPEG, keeping only the orientation.
 
-        Loads EXIF via `piexif`, builds a minimal EXIF dict containing
-        only orientation and ICC profile (when present) and writes the
-        stripped metadata back into the file. Errors are caught and
-        reported.
+        The ICC profile lives in a separate APP2 segment which `piexif`
+        never touches, so it is preserved without any special handling.
+
+        Raises on failure: the caller must not publish a file whose
+        metadata could not be stripped.
         """
-        try:
-            exif_dict = piexif.load(str(path))
+        exif_dict = piexif.load(str(path))
+        orientation = exif_dict["0th"].get(piexif.ImageIFD.Orientation)
 
-            orientation = exif_dict["0th"].get(piexif.ImageIFD.Orientation)
-            icc_profile = exif_dict.get("ICC")
-
+        if orientation:
             new_exif: dict[str, Any] = {
-                "0th": {},
+                "0th": {piexif.ImageIFD.Orientation: orientation},
                 "Exif": {},
                 "GPS": {},
                 "1st": {},
                 "Interop": {},
                 "thumbnail": None,
             }
+            piexif.insert(piexif.dump(new_exif), str(path))
+        else:
+            piexif.remove(str(path))
 
-            if orientation:
-                new_exif["0th"][piexif.ImageIFD.Orientation] = orientation
-            if icc_profile:
-                new_exif["ICC"] = icc_profile
+    def _copy_to_temp(self, image: Image) -> tuple[Path, Path]:
+        """Copy an image next to its final location, under a temporary name.
 
-            exif_bytes = piexif.dump(new_exif)
-            piexif.insert(exif_bytes, str(path))
-
-        except Exception as e:
-            img_sanitizer.logger.error("Error on %s : %s", path, e)
-            self.report.failed += 1
-            return
-
-    def _copy_image(self, image: Image) -> Path:
-        """Copy an image to the destination with a new name.
-
-        The new name is built using the first 12 characters of the
+        The final name is built using the first 12 characters of the
         SHA-1 digest, preserving the original file extension. The
         relative path from source to the image is preserved in the
-        destination directory. Necessary directories are created as
-        needed.
+        destination directory, and missing directories are created.
+
+        Returns `(tmp_path, final_path)`. The caller moves the temporary
+        file to its final name once it has been sanitized.
         """
         relative_dir = image.path.parent.relative_to(self.source)
         final_dir = self.dest / relative_dir
         final_dir.mkdir(parents=True, exist_ok=True)
 
-        new_name = f"{image.short_sha}{image.extension}"
-        dst_path = final_dir / new_name
+        final_path = final_dir / f"{image.short_sha}{image.extension}"
+        tmp_path = final_dir / f".{image.short_sha}.part{image.extension}"
 
-        shutil.copy2(image.path, dst_path)
-        return dst_path
+        shutil.copyfile(image.path, tmp_path)
+        return tmp_path, final_path
